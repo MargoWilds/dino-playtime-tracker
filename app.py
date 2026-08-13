@@ -26,6 +26,7 @@ def init_db():
 
 init_db()
 
+# 1. PAYOUT PIPELINE: Processes your Beasts of Bermuda logout webhooks
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     data = request.get_json(silent=True) or {}
@@ -33,8 +34,31 @@ def handle_webhook():
     if not content:
         return jsonify({"status": "ignored"}), 200
 
+    # Handles user link submissions via the public log channel
+    if content.startswith("!link "):
+        try:
+            parts = content.split()
+            steam_id = parts[1]
+            author_id = data.get("author", {}).get("id") or data.get("member", {}).get("user", {}).get("id")
+            
+            if author_id and len(steam_id) == 17 and steam_id.isdigit():
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR REPLACE INTO links (steam_id, discord_id) VALUES (?, ?)", (steam_id, author_id))
+                conn.commit()
+                conn.close()
+                
+                # Public registration success reply tag
+                discord_url = f"https://discord.com{CASINO_CHANNEL_ID}/messages"
+                dc_headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
+                dc_data = {"content": f"✅ <@{author_id}>, your SteamID `{steam_id}` is now securely linked to your wallet!"}
+                requests.post(discord_url, json=dc_data, headers=dc_headers)
+                return jsonify({"status": "linked"}), 200
+        except Exception:
+            pass
+
+    # Standard log parser for calculating dynamic playtime rewards
     match = re.search(r"Player\s+\S+\s+<(\d+):.*?Hours:\s+(\d+)\s+and\s+Minutes:\s+(\d+)", content)
-    
     if match:
         steam_id = match.group(1)
         hours = int(match.group(2))
@@ -51,44 +75,13 @@ def handle_webhook():
         
         if row:
             discord_id = row[0]
-            
-            # The Bot Handshake: Sends a message directly into your casino channel
-            # UnbelievaBoat sees this text command and immediately awards the DNA!
             discord_url = f"https://discord.com{CASINO_CHANNEL_ID}/messages"
             dc_headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
             dc_data = {"content": f"!add-money <@{discord_id}> {dna_to_give}"}
             requests.post(discord_url, json=dc_data, headers=dc_headers)
-            
-            return jsonify({"status": "paid", "discord_id": discord_id, "amount": dna_to_give}), 200
-            
-        return jsonify({"status": "ignored", "reason": "Player not linked to a Discord ID"}), 200
+            return jsonify({"status": "paid", "amount": dna_to_give}), 200
 
     return jsonify({"status": "ignored"}), 200
-
-@app.route('/interactions', methods=['POST'])
-def handle_interactions():
-    data = request.get_json(silent=True) or {}
-    if data.get("type") == 1:
-        return jsonify({"type": 1}), 200
-        
-    if data.get("type") == 2:
-        options = data["data"].get("options", [])
-        steam_id = options[0]["value"] if options else ""
-        discord_id = data["member"]["user"]["id"]
-        
-        if len(steam_id) == 17 and steam_id.isdigit():
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute("INSERT OR REPLACE INTO links (steam_id, discord_id) VALUES (?, ?)", (steam_id, discord_id))
-            conn.commit()
-            conn.close()
-            
-            return jsonify({
-                "type": 4,
-                "data": {"content": f"✅ Your SteamID `{steam_id}` has been successfully linked to your wallet!"}
-            }), 200
-            
-    return jsonify({"type": 4, "data": {"content": "❌ Invalid command format."}}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
