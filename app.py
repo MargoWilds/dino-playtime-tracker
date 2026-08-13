@@ -7,7 +7,6 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 GUILD_ID = os.environ.get("DISCORD_GUILD_ID")
-API_TOKEN = os.environ.get("UNBELIEVABOAT_TOKEN")
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CASINO_CHANNEL_ID = os.environ.get("CASINO_CHANNEL_ID")
 
@@ -53,13 +52,11 @@ def handle_webhook():
         if row:
             discord_id = row[0]
             
-            ub_url = f"https://unbelievaboat.com{GUILD_ID}/users/{discord_id}"
-            ub_headers = {"Authorization": API_TOKEN, "Content-Type": "application/json"}
-            requests.patch(ub_url, json={"cash": dna_to_give}, headers=ub_headers)
-            
+            # The Bot Handshake: Sends a message directly into your casino channel
+            # UnbelievaBoat sees this text command and immediately awards the DNA!
             discord_url = f"https://discord.com{CASINO_CHANNEL_ID}/messages"
             dc_headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
-            dc_data = {"content": f"<@{discord_id}> {dna_to_give}"}
+            dc_data = {"content": f"!add-money <@{discord_id}> {dna_to_give}"}
             requests.post(discord_url, json=dc_data, headers=dc_headers)
             
             return jsonify({"status": "paid", "discord_id": discord_id, "amount": dna_to_give}), 200
@@ -95,4 +92,3 @@ def handle_interactions():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
-
