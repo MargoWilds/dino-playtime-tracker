@@ -8,7 +8,6 @@ import asyncio
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CASINO_CHANNEL_ID = os.environ.get("CASINO_CHANNEL_ID")
-LINK_CHANNEL_ID = os.environ.get("LINK_CHANNEL_ID")
 
 DB_FILE = "player_links.db"
 
@@ -31,15 +30,17 @@ async def on_ready():
 
 @bot.command(name="link")
 async def link_steam(ctx, steam_id: str):
-    # 1. Force the linking command to only work inside the #steam-link channel
-    if str(ctx.channel.id) != str(LINK_CHANNEL_ID):
-        await ctx.message.delete()
-        warning = await ctx.send(f"❌ {ctx.author.mention}, you can only link your account inside the <#{LINK_CHANNEL_ID}> channel!")
+    # Match by text name of the channel instead of a buggy number key
+    if ctx.channel.name != "steam-link":
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        warning = await ctx.send(f"❌ {ctx.author.mention}, you can only link your account inside the `#steam-link` channel!")
         await asyncio.sleep(5)
         await warning.delete()
         return
 
-    # 2. Process the 17-digit Steam ID
     if len(steam_id) == 17 and steam_id.isdigit():
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -47,18 +48,15 @@ async def link_steam(ctx, steam_id: str):
         conn.commit()
         conn.close()
         
-        # 3. Clean up the user's message to keep the channel blank and private
         try:
             await ctx.message.delete()
         except:
             pass
             
-        # 4. Redirect the success message to the #casino channel where they can see it!
         casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
         if casino_channel:
             await casino_channel.send(f"✅ {ctx.author.mention}, your account has been successfully linked!")
     else:
-        # Send error to #casino as well so they know they made a typo
         casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
         if casino_channel:
             await casino_channel.send(f"❌ {ctx.author.mention}, that SteamID format is invalid. It must be exactly 17 digits.")
@@ -91,7 +89,7 @@ async def handle_game_webhook(request):
         conn.close()
         
         if row:
-            discord_id = row
+            discord_id = row[0]
             casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
             if casino_channel:
                 await casino_channel.send(f"!add-money <@{discord_id}> {dna_to_give}")
