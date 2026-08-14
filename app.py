@@ -31,6 +31,7 @@ async def on_ready():
 
 @bot.command(name="link")
 async def link_steam(ctx, steam_id: str):
+    # 1. Force the linking command to only work inside the #steam-link channel
     if str(ctx.channel.id) != str(LINK_CHANNEL_ID):
         await ctx.message.delete()
         warning = await ctx.send(f"❌ {ctx.author.mention}, you can only link your account inside the <#{LINK_CHANNEL_ID}> channel!")
@@ -38,15 +39,33 @@ async def link_steam(ctx, steam_id: str):
         await warning.delete()
         return
 
+    # 2. Process the 17-digit Steam ID
     if len(steam_id) == 17 and steam_id.isdigit():
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO links (steam_id, discord_id) VALUES (?, ?)", (steam_id, str(ctx.author.id)))
         conn.commit()
         conn.close()
-        await ctx.send(f"✅ {ctx.author.mention}, your SteamID `{steam_id}` is now securely linked to your wallet!")
+        
+        # 3. Clean up the user's message to keep the channel blank and private
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+            
+        # 4. Redirect the success message to the #casino channel where they can see it!
+        casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
+        if casino_channel:
+            await casino_channel.send(f"✅ {ctx.author.mention}, your account has been successfully linked!")
     else:
-        await ctx.send("❌ Invalid SteamID format. It must be exactly 17 digits.")
+        # Send error to #casino as well so they know they made a typo
+        casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
+        if casino_channel:
+            await casino_channel.send(f"❌ {ctx.author.mention}, that SteamID format is invalid. It must be exactly 17 digits.")
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 async def handle_game_webhook(request):
     try:
@@ -72,7 +91,7 @@ async def handle_game_webhook(request):
         conn.close()
         
         if row:
-            discord_id = row[0]
+            discord_id = row
             casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
             if casino_channel:
                 await casino_channel.send(f"!add-money <@{discord_id}> {dna_to_give}")
