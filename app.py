@@ -8,6 +8,7 @@ import asyncio
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CASINO_CHANNEL_ID = os.environ.get("CASINO_CHANNEL_ID")
+LINK_CHANNEL_ID = os.environ.get("LINK_CHANNEL_ID")
 
 DB_FILE = "player_links.db"
 
@@ -30,6 +31,13 @@ async def on_ready():
 
 @bot.command(name="link")
 async def link_steam(ctx, steam_id: str):
+    if str(ctx.channel.id) != str(LINK_CHANNEL_ID):
+        await ctx.message.delete()
+        warning = await ctx.send(f"❌ {ctx.author.mention}, you can only link your account inside the <#{LINK_CHANNEL_ID}> channel!")
+        await asyncio.sleep(5)
+        await warning.delete()
+        return
+
     if len(steam_id) == 17 and steam_id.isdigit():
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
