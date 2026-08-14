@@ -1,13 +1,12 @@
 import os
 import re
 import sqlite3
-import requests
-from flask import Flask, request, jsonify
+import discord
+from discord.ext import commands
+from aiohttp import web
+import asyncio
 
-app = Flask(__name__)
-
-GUILD_ID = os.environ.get("DISCORD_GUILD_ID")
-DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CASINO_CHANNEL_ID = os.environ.get("CASINO_CHANNEL_ID")
 
 DB_FILE = "player_links.db"
@@ -15,50 +14,41 @@ DB_FILE = "player_links.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS links (
-            steam_id TEXT PRIMARY KEY,
-            discord_id TEXT
-        )
-    """)
+    cursor.execute("CREATE TABLE IF NOT EXISTS links (steam_id TEXT PRIMARY KEY, discord_id TEXT)")
     conn.commit()
     conn.close()
 
 init_db()
 
-# 1. PAYOUT PIPELINE: Processes your Beasts of Bermuda logout webhooks
-@app.route('/webhook', methods=['POST'])
-def handle_webhook():
-    data = request.get_json(silent=True) or {}
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f"Bot is online as {bot.user}")
+
+@bot.command(name="link")
+async def link_steam(ctx, steam_id: str):
+    if len(steam_id) == 17 and steam_id.isdigit():
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO links (steam_id, discord_id) VALUES (?, ?)", (steam_id, str(ctx.author.id)))
+        conn.commit()
+        conn.close()
+        await ctx.send(f"✅ {ctx.author.mention}, your SteamID `{steam_id}` is now securely linked to your wallet!")
+    else:
+        await ctx.send("❌ Invalid SteamID format. It must be exactly 17 digits.")
+
+async def handle_game_webhook(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.Response(text="Invalid JSON", status=400)
+        
     content = data.get("content", "")
-    if not content:
-        return jsonify({"status": "ignored"}), 200
-
-    # Handles user link submissions via the public log channel
-    if content.startswith("!link "):
-        try:
-            parts = content.split()
-            steam_id = parts[1]
-            author_id = data.get("author", {}).get("id") or data.get("member", {}).get("user", {}).get("id")
-            
-            if author_id and len(steam_id) == 17 and steam_id.isdigit():
-                conn = sqlite3.connect(DB_FILE)
-                cursor = conn.cursor()
-                cursor.execute("INSERT OR REPLACE INTO links (steam_id, discord_id) VALUES (?, ?)", (steam_id, author_id))
-                conn.commit()
-                conn.close()
-                
-                # Public registration success reply tag
-                discord_url = f"https://discord.com{CASINO_CHANNEL_ID}/messages"
-                dc_headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
-                dc_data = {"content": f"✅ <@{author_id}>, your SteamID `{steam_id}` is now securely linked to your wallet!"}
-                requests.post(discord_url, json=dc_data, headers=dc_headers)
-                return jsonify({"status": "linked"}), 200
-        except Exception:
-            pass
-
-    # Standard log parser for calculating dynamic playtime rewards
     match = re.search(r"Player\s+\S+\s+<(\d+):.*?Hours:\s+(\d+)\s+and\s+Minutes:\s+(\d+)", content)
+    
     if match:
         steam_id = match.group(1)
         hours = int(match.group(2))
@@ -75,13 +65,23 @@ def handle_webhook():
         
         if row:
             discord_id = row[0]
-            discord_url = f"https://discord.com{CASINO_CHANNEL_ID}/messages"
-            dc_headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
-            dc_data = {"content": f"!add-money <@{discord_id}> {dna_to_give}"}
-            requests.post(discord_url, json=dc_data, headers=dc_headers)
-            return jsonify({"status": "paid", "amount": dna_to_give}), 200
+            casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
+            if casino_channel:
+                await casino_channel.send(f"!add-money <@{discord_id}> {dna_to_give}")
+                return web.Response(text="Paid", status=200)
+                
+    return web.Response(text="Ignored", status=200)
 
-    return jsonify({"status": "ignored"}), 200
+async def main():
+    app = web.Application()
+    app.router.add_post('/webhook', handle_game_webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 5000)))
+    await site.start()
+    
+    async with bot:
+        await bot.start(BOT_TOKEN)
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+if __name__ == "__main__":
+    asyncio.run(main())
