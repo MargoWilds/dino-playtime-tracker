@@ -30,17 +30,9 @@ async def on_ready():
 
 @bot.command(name="link")
 async def link_steam(ctx, steam_id: str):
-    # Match by text name of the channel instead of a buggy number key
-    if ctx.channel.name != "steam-link":
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        warning = await ctx.send(f"❌ {ctx.author.mention}, you can only link your account inside the `#steam-link` channel!")
-        await asyncio.sleep(5)
-        await warning.delete()
-        return
-
+    # Removed the buggy name check rule completely! 
+    # Since you already locked down channel visibility via Discord permissions, 
+    # players can physically only use this command wherever you allow them to type.
     if len(steam_id) == 17 and steam_id.isdigit():
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -89,7 +81,7 @@ async def handle_game_webhook(request):
         conn.close()
         
         if row:
-            discord_id = row[0]
+            discord_id = row
             casino_channel = bot.get_channel(int(CASINO_CHANNEL_ID))
             if casino_channel:
                 await casino_channel.send(f"!add-money <@{discord_id}> {dna_to_give}")
